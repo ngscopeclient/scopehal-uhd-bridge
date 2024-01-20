@@ -42,12 +42,14 @@
 #include <map>
 #include <mutex>
 
-/*
-#include <libspectrometer.h>
+#include <uhd/usrp/multi_usrp.hpp>
+#include <uhd/exception.hpp>
+#include <uhd/types/tune_request.hpp>
 
 extern Socket g_scpiSocket;
 extern Socket g_dataSocket;
 
+/*
 void WaveformServerThread();
 
 extern std::string g_model;
