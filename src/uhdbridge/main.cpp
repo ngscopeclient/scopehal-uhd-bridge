@@ -34,7 +34,7 @@
  */
 
 #include "uhdbridge.h"
-//#include "AseqSCPIServer.h"
+#include "UHDSCPIServer.h"
 #include <signal.h>
 
 using namespace std;
@@ -47,8 +47,12 @@ void help();
 void help()
 {
 	fprintf(stderr,
-			"uhdbridge [general options] [logger options]\n"
+			"uhdbridge [device options] [general options] [logger options]\n"
 			"\n"
+			"  [device options:]\n"
+			"    --device \"devstring\"        : Connects to UHD device with the specified device argument string.\n"
+			"                                    For IP connected SDRs use \"addr=hostname_or_ip\".\n"
+			"                                    See Ettus UHD documentation for full details on supported device strings.\n"
 			"  [general options]:\n"
 			"    --help                        : this message...\n"
 			"    --scpi-port port              : specifies the SCPI control plane port (default 5025)\n"
@@ -67,11 +71,9 @@ void help()
 		   );
 }
 
-/*
 string g_model;
 string g_serial;
-//string g_fwver;
-*/
+
 Socket g_scpiSocket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
 Socket g_dataSocket(AF_INET6, SOCK_STREAM, IPPROTO_TCP);
 
@@ -80,23 +82,10 @@ BOOL WINAPI OnQuit(DWORD signal);
 #else
 void OnQuit(int signal);
 #endif
-/*
-uintptr_t g_hDevice = 0;
 
-int g_numPixels = 3653;
-bool g_triggerArmed;
+uhd::usrp::multi_usrp::sptr g_sdr;
 
-void ReadCalData();
-
-//Wavelengths, in nm, of each spectral bin
-vector<float> g_wavelengths;
-
-//sensor flatness cal
-vector<float> g_sensorResponse;
-
-//abs irradiance cal
-vector<float> g_absResponse;
-float g_absCal = 1;*/
+//bool g_triggerArmed;
 
 int main(int argc, char* argv[])
 {
@@ -106,6 +95,7 @@ int main(int argc, char* argv[])
 	//Parse command-line arguments
 	uint16_t scpi_port = 5025;
 	uint16_t waveform_port = 5026;
+	string devpath;
 	for(int i=1; i<argc; i++)
 	{
 		string s(argv[i]);
@@ -126,6 +116,12 @@ int main(int argc, char* argv[])
 				scpi_port = atoi(argv[++i]);
 		}
 
+		else if(s == "--device")
+		{
+			if(i+1 < argc)
+				devpath = argv[++i];
+		}
+
 		else if(s == "--waveform-port")
 		{
 			if(i+1 < argc)
@@ -142,101 +138,33 @@ int main(int argc, char* argv[])
 	//Set up logging
 	g_log_sinks.emplace(g_log_sinks.begin(), new ColoredSTDLogSink(console_verbosity));
 
+	if(devpath.empty())
+	{
+		help();
+		return 0;
+	}
+
 	try
 	{
 		//Try to connect to the SDR
-		uhd::usrp::multi_usrp::sptr sdr = uhd::usrp::multi_usrp::make(string("addr=10.2.4.16"));
+		g_sdr = uhd::usrp::multi_usrp::make(devpath);
 
-		//Set reference clock
-		sdr->set_clock_source("internal");
+		//auto config = g_sdr->get_pp_string();
+		//LogDebug("%s\n", config.c_str());
 
-		//Select sub device
-		sdr->set_rx_subdev_spec(string("A:A"));
-
-		//Set sample rate to 15 Msps (seems to be stable?)
-		sdr->set_rx_rate(15e6);
-
-		//Set center frequency to 2.415 GHz
-		uhd::tune_request_t tune(2415 * 1e6);
-		sdr->set_rx_freq(tune);
-
-		//TODO: gain?
-		sdr->set_rx_gain(20);
-
-		//RX bandwidth is 15 MHz
-		sdr->set_rx_bandwidth(15e6);
-
-		//Select antenna to use
-		sdr->set_rx_antenna("TX/RX");
-
-		//Get configuration
-		auto config = sdr->get_pp_string();
-		LogDebug("%s\n", config.c_str());
+		//Get properties of the SDR
+		/*
+		auto props = sdr->get_tree();
+		uhd::fs_path path("/mboards/0/");
+		//auto propnames =  props->list(path);
+		LogDebug("name: %s\n", props->access<string>("/mboards/0/name").get().c_str());
+		LogDebug("fpgaver: %s\n", props->access<string>("/mboards/0/fpga_version").get().c_str());
+		*/
 
 		//Print info about the device
-		map<string, string> info = sdr->get_usrp_rx_info(0);
-		LogDebug("Vendor: (no API)\n");
-		LogDebug("Model:  %s\n", info["mboard_name"].c_str());
-		LogDebug("Serial: %s\n", info["mboard_serial"].c_str());
-
-		//TODO: check LO lock detect
-
-		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-		//Make RX streamer
-		uint64_t blocksize = 15e6;	//1 second
-		uhd::stream_args_t args("fc32", "sc16");
-		vector<size_t> channels;
-		channels.push_back(0);
-		args.channels = channels;
-		uhd::rx_streamer::sptr rx = sdr->get_rx_stream(args);
-
-		//Make RX buffer
-		vector<complex<float>> buf(blocksize);
-
-		//TODO: play with STREAM_MODE_START_CONTINUOUS
-
-		//Start streaming
-		uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
-		cmd.num_samps = blocksize;
-		cmd.stream_now = true;
-		cmd.time_spec = uhd::time_spec_t();
-		rx->issue_stream_cmd(cmd);
-
-		//Receive the data
-		uhd::rx_metadata_t meta;
-		size_t nrx = 0;
-		while(true)
-		{
-			size_t rxsize = rx->recv(&buf.front(), buf.size(), meta, 3.0, false);
-			nrx += rxsize;
-
-			switch(meta.error_code)
-			{
-				case uhd::rx_metadata_t::ERROR_CODE_TIMEOUT:
-					LogError("timeout\n");
-					break;
-
-				case uhd::rx_metadata_t::ERROR_CODE_OVERFLOW:
-					LogError("overflow\n");
-					break;
-
-				case uhd::rx_metadata_t::ERROR_CODE_NONE:
-					LogDebug("got %zu samples for total of %zu\n", rxsize, nrx);
-					break;
-
-				default:
-					LogDebug("unknown error\n");
-			}
-
-			if(nrx >= blocksize)
-				break;
-		}
-
-		//Write to disk
-		FILE* fp = fopen("/tmp/test.complex", "wb");
-		fwrite(&buf[0], sizeof(complex<float>), blocksize, fp);
-		fclose(fp);
+		map<string, string> info = g_sdr->get_usrp_rx_info(0);
+		g_model = info["mboard_name"];
+		g_serial = info["mboard_serial"];
 
 		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -257,7 +185,6 @@ int main(int argc, char* argv[])
 		g_scpiSocket.Listen();
 		LogDebug("Ready\n");
 
-		/*
 		while(true)
 		{
 			Socket scpiClient = g_scpiSocket.Accept();
@@ -265,7 +192,7 @@ int main(int argc, char* argv[])
 				break;
 
 			//Create a server object for this connection
-			AseqSCPIServer server(scpiClient.Detach());
+			UHDSCPIServer server(scpiClient.Detach());
 
 			//Launch the data-plane thread
 			thread dataThread(WaveformServerThread);
@@ -277,7 +204,6 @@ int main(int argc, char* argv[])
 			dataThread.join();
 			g_waveformThreadQuit = false;
 		}
-		*/
 	}
 	catch(uhd::exception& ex)
 	{
@@ -297,8 +223,6 @@ void OnQuit(int /*signal*/)
 {
 #endif
 	LogNotice("Shutting down...\n");
-
-	//disconnectDeviceContext(&g_hDevice);
 
 	exit(0);
 }

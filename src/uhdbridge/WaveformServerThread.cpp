@@ -27,43 +27,137 @@
 *                                                                                                                      *
 ***********************************************************************************************************************/
 
-#ifndef uhdbridge_h
-#define uhdbridge_h
+/**
+	@file
+	@author Andrew D. Zonenberg
+	@brief Waveform data thread (data plane traffic only, no control plane SCPI)
+ */
+#include "uhdbridge.h"
+#include <string.h>
 
-#include "../../lib/log/log.h"
-#include "../../lib/xptools/Socket.h"
+using namespace std;
 
-#ifdef _WIN32
-#include <windows.h>
-#include <shlwapi.h>
+volatile bool g_waveformThreadQuit = false;
+
+void WaveformServerThread()
+{
+#ifdef __linux__
+	pthread_setname_np(pthread_self(), "WaveformThread");
 #endif
 
-#include <thread>
-#include <map>
-#include <mutex>
+	Socket client = g_dataSocket.Accept();
+	LogVerbose("Client connected to data plane socket\n");
 
-#include <uhd/usrp/multi_usrp.hpp>
-#include <uhd/exception.hpp>
-#include <uhd/types/tune_request.hpp>
+	if(!client.IsValid())
+		return;
+	if(!client.DisableNagle())
+		LogWarning("Failed to disable Nagle on socket, performance may be poor\n");
 
-extern Socket g_scpiSocket;
-extern Socket g_dataSocket;
+		//TODO: check LO lock detect
 
-void WaveformServerThread();
+	/*
+		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-extern std::string g_model;
-extern std::string g_serial;
+		//Make RX streamer
+		uint64_t blocksize = 15e6;	//1 second
+		uhd::stream_args_t args("fc32", "sc16");
+		vector<size_t> channels;
+		channels.push_back(0);
+		args.channels = channels;
+		uhd::rx_streamer::sptr rx = g_sdr->get_rx_stream(args);
 
-extern std::mutex g_mutex;
+		//Make RX buffer
+		vector<complex<float>> buf(blocksize);
 
-extern volatile bool g_waveformThreadQuit;
+		//TODO: play with STREAM_MODE_START_CONTINUOUS
 
-//extern bool g_triggerArmed;
-//extern bool g_triggerOneShot;
+		//Start streaming
+		uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+		cmd.num_samps = blocksize;
+		cmd.stream_now = true;
+		cmd.time_spec = uhd::time_spec_t();
+		rx->issue_stream_cmd(cmd);
 
-extern uhd::usrp::multi_usrp::sptr g_sdr;
+		//Receive the data
+		uhd::rx_metadata_t meta;
+		size_t nrx = 0;
+		while(true)
+		{
+			size_t rxsize = rx->recv(&buf.front(), buf.size(), meta, 3.0, false);
+			nrx += rxsize;
 
-extern size_t g_rxBlockSize;
-extern int64_t g_centerFrequency;
+			switch(meta.error_code)
+			{
+				case uhd::rx_metadata_t::ERROR_CODE_TIMEOUT:
+					LogError("timeout\n");
+					break;
 
-#endif
+				case uhd::rx_metadata_t::ERROR_CODE_OVERFLOW:
+					LogError("overflow\n");
+					break;
+
+				case uhd::rx_metadata_t::ERROR_CODE_NONE:
+					LogDebug("got %zu samples for total of %zu\n", rxsize, nrx);
+					break;
+
+				default:
+					LogDebug("unknown error\n");
+			}
+
+			if(nrx >= blocksize)
+				break;
+		}
+
+		//Write to disk
+		FILE* fp = fopen("/tmp/test.complex", "wb");
+		fwrite(&buf[0], sizeof(complex<float>), blocksize, fp);
+		fclose(fp);
+		*/
+
+	/*
+	const int framesize = 3699;
+	uint16_t* framePixels = new uint16_t[framesize];
+	float* frameFlattened = new float[g_numPixels];
+
+	while(!g_waveformThreadQuit)
+	{
+		//wait if trigger not armed
+		if(!g_triggerArmed)
+		{
+			this_thread::sleep_for(chrono::microseconds(1000));
+			continue;
+		}
+
+		//Acquire data
+		{
+			lock_guard<mutex> lock(g_mutex);
+
+			//Trigger an acquisition
+			int err;
+			if(0 != (err = triggerAcquisition(&g_hDevice)))
+				LogError("failed to trigger acquisition, code %d\n", err);
+
+			//Get the frame data
+			if(0 != (err = getFrame(framePixels, 0xffff, &g_hDevice)))
+			{
+				LogError("failed to get frame, code %d\n", err);
+				break;
+			}
+
+			if(g_triggerOneShot)
+				g_triggerArmed = false;
+		}
+
+		//Frame data seems to be *mirrored* - shortest wavelengths at right... But we'll fix that clientside.
+		for(int i=0; i<g_numPixels; i++)
+			frameFlattened[i] = framePixels[i+32];
+
+		//Send the flattened data to the client
+		if(!client.SendLooped((uint8_t*)frameFlattened, g_numPixels * sizeof(float)))
+			break;
+	}
+	*/
+	LogDebug("Client disconnected from data plane socket\n");
+
+	//Clean up
+}

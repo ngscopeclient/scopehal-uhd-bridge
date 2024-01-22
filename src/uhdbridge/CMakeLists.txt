@@ -1,8 +1,8 @@
 ###############################################################################
 #C++ compilation
 add_executable(uhdbridge
-	#AseqSCPIServer.cpp
-	#WaveformServerThread.cpp
+	UHDSCPIServer.cpp
+	WaveformServerThread.cpp
 	main.cpp
 )
 

@@ -27,43 +27,68 @@
 *                                                                                                                      *
 ***********************************************************************************************************************/
 
-#ifndef uhdbridge_h
-#define uhdbridge_h
+/**
+	@file
+	@author Andrew D. Zonenberg
+	@brief Declaration of UHDSCPIServer
+ */
 
-#include "../../lib/log/log.h"
-#include "../../lib/xptools/Socket.h"
+#ifndef UHDSCPIServer_h
+#define UHDSCPIServer_h
 
-#ifdef _WIN32
-#include <windows.h>
-#include <shlwapi.h>
-#endif
+#include "../../lib/scpi-server-tools/BridgeSCPIServer.h"
 
-#include <thread>
-#include <map>
-#include <mutex>
+/**
+	@brief SCPI server for managing control plane traffic to a single client
+ */
+class UHDSCPIServer : public BridgeSCPIServer
+{
+public:
+	UHDSCPIServer(ZSOCKET sock);
+	virtual ~UHDSCPIServer();
 
-#include <uhd/usrp/multi_usrp.hpp>
-#include <uhd/exception.hpp>
-#include <uhd/types/tune_request.hpp>
+protected:
+	virtual std::string GetMake() override;
+	virtual std::string GetModel() override;
+	virtual std::string GetSerial() override;
+	virtual std::string GetFirmwareVersion() override;
+	virtual size_t GetAnalogChannelCount() override;
+	virtual std::vector<size_t> GetSampleRates() override;
+	virtual std::vector<size_t> GetSampleDepths() override;
 
-extern Socket g_scpiSocket;
-extern Socket g_dataSocket;
+	virtual bool OnCommand(
+		const std::string& line,
+		const std::string& subject,
+		const std::string& cmd,
+		const std::vector<std::string>& args) override;
 
-void WaveformServerThread();
+	virtual bool OnQuery(
+		const std::string& line,
+		const std::string& subject,
+		const std::string& cmd) override;
 
-extern std::string g_model;
-extern std::string g_serial;
+	virtual bool GetChannelID(const std::string& subject, size_t& id_out) override;
+	virtual ChannelType GetChannelType(size_t channel) override;
 
-extern std::mutex g_mutex;
+	//Command methods
+	virtual void AcquisitionStart(bool oneShot = false) override;
+	virtual void AcquisitionForceTrigger() override;
+	virtual void AcquisitionStop() override;
+	virtual void SetChannelEnabled(size_t chIndex, bool enabled) override;
+	virtual void SetAnalogCoupling(size_t chIndex, const std::string& coupling) override;
+	virtual void SetAnalogRange(size_t chIndex, double range_V) override;
+	virtual void SetAnalogOffset(size_t chIndex, double offset_V) override;
+	virtual void SetDigitalThreshold(size_t chIndex, double threshold_V) override;
+	virtual void SetDigitalHysteresis(size_t chIndex, double hysteresis) override;
 
-extern volatile bool g_waveformThreadQuit;
-
-//extern bool g_triggerArmed;
-//extern bool g_triggerOneShot;
-
-extern uhd::usrp::multi_usrp::sptr g_sdr;
-
-extern size_t g_rxBlockSize;
-extern int64_t g_centerFrequency;
+	virtual void SetSampleRate(uint64_t rate_hz) override;
+	virtual void SetSampleDepth(uint64_t depth) override;
+	virtual void SetTriggerDelay(uint64_t delay_fs) override;
+	virtual void SetTriggerSource(size_t chIndex) override;
+	virtual void SetTriggerLevel(double level_V) override;
+	virtual void SetTriggerTypeEdge() override;
+	virtual void SetEdgeTriggerEdge(const std::string& edge) override;
+	virtual bool IsTriggerArmed() override;
+};
 
 #endif
