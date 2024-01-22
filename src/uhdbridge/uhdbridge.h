@@ -58,12 +58,13 @@ extern std::mutex g_mutex;
 
 extern volatile bool g_waveformThreadQuit;
 
-//extern bool g_triggerArmed;
-//extern bool g_triggerOneShot;
+extern bool g_triggerArmed;
+extern bool g_triggerOneShot;
 
 extern uhd::usrp::multi_usrp::sptr g_sdr;
 
 extern size_t g_rxBlockSize;
 extern int64_t g_centerFrequency;
+extern int64_t g_rxRate;
 
 #endif

@@ -53,72 +53,6 @@ void WaveformServerThread()
 	if(!client.DisableNagle())
 		LogWarning("Failed to disable Nagle on socket, performance may be poor\n");
 
-		//TODO: check LO lock detect
-
-	/*
-		////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-		//Make RX streamer
-		uint64_t blocksize = 15e6;	//1 second
-		uhd::stream_args_t args("fc32", "sc16");
-		vector<size_t> channels;
-		channels.push_back(0);
-		args.channels = channels;
-		uhd::rx_streamer::sptr rx = g_sdr->get_rx_stream(args);
-
-		//Make RX buffer
-		vector<complex<float>> buf(blocksize);
-
-		//TODO: play with STREAM_MODE_START_CONTINUOUS
-
-		//Start streaming
-		uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
-		cmd.num_samps = blocksize;
-		cmd.stream_now = true;
-		cmd.time_spec = uhd::time_spec_t();
-		rx->issue_stream_cmd(cmd);
-
-		//Receive the data
-		uhd::rx_metadata_t meta;
-		size_t nrx = 0;
-		while(true)
-		{
-			size_t rxsize = rx->recv(&buf.front(), buf.size(), meta, 3.0, false);
-			nrx += rxsize;
-
-			switch(meta.error_code)
-			{
-				case uhd::rx_metadata_t::ERROR_CODE_TIMEOUT:
-					LogError("timeout\n");
-					break;
-
-				case uhd::rx_metadata_t::ERROR_CODE_OVERFLOW:
-					LogError("overflow\n");
-					break;
-
-				case uhd::rx_metadata_t::ERROR_CODE_NONE:
-					LogDebug("got %zu samples for total of %zu\n", rxsize, nrx);
-					break;
-
-				default:
-					LogDebug("unknown error\n");
-			}
-
-			if(nrx >= blocksize)
-				break;
-		}
-
-		//Write to disk
-		FILE* fp = fopen("/tmp/test.complex", "wb");
-		fwrite(&buf[0], sizeof(complex<float>), blocksize, fp);
-		fclose(fp);
-		*/
-
-	/*
-	const int framesize = 3699;
-	uint16_t* framePixels = new uint16_t[framesize];
-	float* frameFlattened = new float[g_numPixels];
-
 	while(!g_waveformThreadQuit)
 	{
 		//wait if trigger not armed
@@ -128,35 +62,100 @@ void WaveformServerThread()
 			continue;
 		}
 
-		//Acquire data
+		LogDebug("trigger armed\n");
+
+		auto config = g_sdr->get_pp_string();
+		LogDebug("%s\n", config.c_str());
+
+		//Snapshot some variables when we armed the trigger
+		bool oneshot = g_triggerOneShot;
+
+		//TODO: check LO lock detect
+
+		//Make the streamer
+		//For now, always get fp32 data out and use int16 over the wire
+		//For now, only one channel is supported
+		uhd::stream_args_t args("fc32", "sc16");
+		vector<size_t> channels;
+		channels.push_back(0);
+		args.channels = channels;
+		uhd::rx_streamer::sptr rx = g_sdr->get_rx_stream(args);
+
+		//TODO: play with STREAM_MODE_START_CONTINUOUS
+		//For now, grab a constant number of samples each "trigger" then stop (so acquisitions may not be gap-free)
+		while(g_triggerArmed)
 		{
-			lock_guard<mutex> lock(g_mutex);
+			LogDebug("starting block\n");
 
-			//Trigger an acquisition
-			int err;
-			if(0 != (err = triggerAcquisition(&g_hDevice)))
-				LogError("failed to trigger acquisition, code %d\n", err);
+			//Snapshot some values for this block
+			size_t blocksize = g_rxBlockSize;
+			int64_t rate = g_rxRate;
 
-			//Get the frame data
-			if(0 != (err = getFrame(framePixels, 0xffff, &g_hDevice)))
+			//Make RX buffer
+			vector<complex<float>> buf(blocksize);
+
+			//Start streaming
+			uhd::stream_cmd_t cmd(uhd::stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE);
+			cmd.num_samps = blocksize;
+			cmd.stream_now = true;
+			cmd.time_spec = uhd::time_spec_t();
+			rx->issue_stream_cmd(cmd);
+
+			//Receive the data
+			uhd::rx_metadata_t meta;
+			size_t nrx = 0;
+			while(true)
 			{
-				LogError("failed to get frame, code %d\n", err);
+				size_t rxsize = rx->recv(&buf.front(), buf.size(), meta, 5.0, false);
+				nrx += rxsize;
+				bool err = true;
+
+				switch(meta.error_code)
+				{
+					case uhd::rx_metadata_t::ERROR_CODE_TIMEOUT:
+						LogError("timeout\n");
+						break;
+
+					case uhd::rx_metadata_t::ERROR_CODE_OVERFLOW:
+						LogError("overflow\n");
+						break;
+
+					case uhd::rx_metadata_t::ERROR_CODE_NONE:
+						LogDebug("got %zu samples for total of %zu\n", rxsize, nrx);
+						err = false;
+						break;
+
+					default:
+						LogDebug("unknown error\n");
+				}
+
+				if(nrx >= blocksize)
+					break;
+
+				if(err)
+					break;
+			}
+			LogDebug("recv done, got %zu of %zu requested samples\n", nrx, blocksize);
+
+			//Send the data out to the client
+			//Just the waveform size then the sample data
+			uint64_t len = nrx;
+			if(!client.SendLooped((uint8_t*)&len, sizeof(len)))
+				break;
+			if(!client.SendLooped((uint8_t*)&rate, sizeof(len)))
+				break;
+			if(!client.SendLooped((uint8_t*)&buf[0], nrx * sizeof(complex<float>)))
+				break;
+
+			//If one shot, stop
+			if(oneshot)
+			{
+				g_triggerArmed = false;
 				break;
 			}
-
-			if(g_triggerOneShot)
-				g_triggerArmed = false;
 		}
-
-		//Frame data seems to be *mirrored* - shortest wavelengths at right... But we'll fix that clientside.
-		for(int i=0; i<g_numPixels; i++)
-			frameFlattened[i] = framePixels[i+32];
-
-		//Send the flattened data to the client
-		if(!client.SendLooped((uint8_t*)frameFlattened, g_numPixels * sizeof(float)))
-			break;
 	}
-	*/
+
 	LogDebug("Client disconnected from data plane socket\n");
 
 	//Clean up

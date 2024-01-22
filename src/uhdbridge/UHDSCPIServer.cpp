@@ -61,10 +61,12 @@ using namespace std;
 
 mutex g_mutex;
 
+bool g_triggerArmed = false;
 bool g_triggerOneShot = false;
 
 size_t g_rxBlockSize = 0;
 int64_t g_centerFrequency = 0;
+int64_t g_rxRate = 1;
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Construction / destruction
@@ -150,6 +152,9 @@ vector<size_t> UHDSCPIServer::GetSampleRates()
 		//TODO: Round the rate as close as possible to a nice round number
 		rates.push_back(f);
 	}
+
+	//DEBUG: add 15 Msps exactly as an option
+	rates.push_back(15 * 1000 * 1000);
 
 	reverse(rates.begin(), rates.end());
 
@@ -252,18 +257,19 @@ BridgeSCPIServer::ChannelType UHDSCPIServer::GetChannelType(size_t /*channel*/)
 
 void UHDSCPIServer::AcquisitionStart(bool oneShot)
 {
-	/*g_triggerArmed = true;
-	g_triggerOneShot = oneShot;*/
+	g_triggerArmed = true;
+	g_triggerOneShot = oneShot;
 }
 
 void UHDSCPIServer::AcquisitionForceTrigger()
 {
-	//g_triggerArmed = true;
+	g_triggerArmed = true;
+	g_triggerOneShot = false;
 }
 
 void UHDSCPIServer::AcquisitionStop()
 {
-	//g_triggerArmed = false;
+	g_triggerArmed = false;
 }
 
 void UHDSCPIServer::SetChannelEnabled(size_t /*chIndex*/, bool /*enabled*/)
@@ -293,9 +299,10 @@ void UHDSCPIServer::SetDigitalHysteresis(size_t /*chIndex*/, double /*hysteresis
 void UHDSCPIServer::SetSampleRate(uint64_t rate_hz)
 {
 	g_sdr->set_rx_rate(rate_hz);
+	g_rxRate = rate_hz;
 
 	auto actual = g_sdr->get_rx_rate();
-	LogDebug("set rx bandwidth: requested %.2f Msps, got %.2f Msps\n", rate_hz*1e-6, actual*1e-6);
+	LogDebug("set rx sample rate: requested %.2f Msps, got %.2f Msps\n", rate_hz*1e-6, actual*1e-6);
 }
 
 void UHDSCPIServer::SetSampleDepth(uint64_t depth)
