@@ -227,57 +227,6 @@ void OnQuit(int /*signal*/)
 	exit(0);
 }
 
-/*
-void ReadCalData()
-{
-	//Read calibration data
-	LogDebug("Reading calibration data...\n");
-	LogIndenter li;
-	const int ncal = 97264;	//TODO: is this always the same size?
-	char buf[ncal+1];
-	int err;
-	if(0 != (err = readFlash((uint8_t*)buf, 0, ncal, &g_hDevice)))
-	{
-		LogError("failed to read cal data, code %d\n", err);
-		exit(1);
-	}
-	buf[ncal] = '\0';
-
-	//Parse the text into lines
-	string sbuf(buf);
-	auto lines = explode(sbuf, '\n');
-	LogDebug("Found %zu lines of data\n", lines.size());
-
-	//First line: model c.[Y|N] serial
-	auto firstFields = explode(lines[0], ' ');
-	g_model = Trim(firstFields[0]);
-	g_serial = Trim(firstFields[2]);
-	LogDebug("Spectrometer is model %s, serial %s\n", g_model.c_str(), g_serial.c_str());
-	bool hasAbsCal = (firstFields[1] == "c.Y");
-	if(hasAbsCal)
-		LogDebug("Absolute cal data present\n");
-
-	//Starting at line 13 (one based, per docs) of the file we have 3653 spectral bins worth of wavelength data
-	for(int i=0; i<g_numPixels; i++)
-		g_wavelengths.push_back(atof(lines[i+12].c_str()));
-	LogDebug("First pixel is %.3f nm\n", g_wavelengths[0]);
-	LogDebug("Last pixel is %.3f nm\n", g_wavelengths[g_numPixels-1]);
-
-	//Skip a blank line
-
-	//Read the sensor response normalization data
-	for(int i=0; i<g_numPixels; i++)
-		g_sensorResponse.push_back(atof(lines[i+13+g_numPixels].c_str()));
-	LogDebug("First pixel norm coeff is %.3f\n", g_sensorResponse[0]);
-	LogDebug("Mid pixel norm coeff is %.3f\n", g_sensorResponse[2365]);
-	LogDebug("Last pixel norm coeff is %.3f\n", g_sensorResponse[g_numPixels-1]);
-
-	//Read absolute irradiance data, if present
-	g_absCal = atof(lines[1].c_str());
-	for(int i=0; i<g_numPixels; i++)
-		g_absResponse.push_back(atof(lines[i+13+2*g_numPixels].c_str()));
-}
-*/
 /**
 	@brief Splits a string up into an array separated by delimiters
  */
